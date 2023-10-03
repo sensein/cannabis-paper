@@ -34,18 +34,71 @@ Derivatives directory:
     * _ses-baseline_ directory with fmriprep outputs from the baseline timepoint scans
     * _task_analysis_surface_ directory with first and second level outputs from the cifti-based analysis and intermediate and final visualizations
     * _task_analysis_volume_ directory with first and second level outputs from the nifti-based analysis and intermediate and final visualizations
+   
 
+### Code Requirements:
+
+1. Create a conda environment using _environment_setup/cannabis_paper_env.yml_ and load it before running any python scripts
+2. Download the following singularity containers (eg. using Dockerhub):
+  * heudiconv: heudiconv_0.11.3.sif
+  * fmriprep: fmriprep_23.0.1.sif
+    * in order to run fmriprep successfully, note that you also need a valid fs_license.txt (change path accordingly)
+  * mriqc: mriqc_0.16.1.sif
+3. Install the following:
+  * singularity: Singularity 3.9.5
+  * hcp tools: Connectome Workbench v1.2.3
+
+_Note that the path the containers and installations will need to be changed depending on where you keep yours!_
 
 ### Preprocessing:
 
 1. Heudiconv-based BIDS conversion
 
-2. fmriprep 23.0.1 preprocessing pipeline
+* Run the following using SLURM job scheduler:
+  * _preprocessing/bids_conversion/submit_job_array.sh_
+    * this will call for each participant: _preprocessing/bids_conversion/ss_heudiconv.sh_
+    * which will use: _preprocessing/bids_conversion/heuristic.py_
+   
+* Run the following python script to assign field maps to scans:
+  * _preprocessing/bids_conversion/add_intendedfor_excep.py_
+
+
+2. fmriprep preprocessing pipeline
+
+* HC baseline: Run the following using SLURM job scheduler:
+  * _preprocessing/fmriprep_HC_baseline/submit_job_array_baseline.sh_
+    * this will call for each task: _preprocessing/fmriprep_HC_baseline/ss_fmriprep_baseline.sh_
+    * which will use: _preprocessing/fmriprep_HC_baseline/baseline_unco_filter.json_
+   
+* MMC baseline: Run the following using SLURM job scheduler:
+  * _preprocessing/fmriprep_MM_baseline/submit_job_array_baseline.sh_
+    * this will call for each task: _preprocessing/fmriprep_MM_baseline/ss_fmriprep_baseline.sh_
+    * which will use: _preprocessing/fmriprep_MM_baseline/baseline_unco_filter.json_
+      
+* MMC one year: Run the following using SLURM job scheduler:
+  * _preprocessing/fmriprep_MM_1year/submit_job_array_1year.sh_
+    * this will call for each task: _preprocessing/fmriprep_MM_1year/ss_fmriprep_1year.sh_
+    * which will use: _preprocessing/fmriprep_MM_1year/1year_unco_filter.json_
+
 
 3. mriqc-based quality metric generation
-  
+
+* Run the following using SLURM job scheduler:
+  * _preprocessing/mriqc/submit_job_array_mriqc_participants.sh_
+    * this will call for each task: _preprocessing/mriqc/ss_mriqc_participants.sh_
+
+* Run the following jupyter notebooks in order:
+  * _preprocessing/mriqc/create_mriqc_tsv.ipynb_
+
+
 4. Events file population with appropriate event timings and durations
 
+* Run the following jupyter notebooks in order:
+  * _preprocessing/events_file_population/create_SST_events_files.ipynb_
+  * _preprocessing/events_file_population/create_nback_events_files.ipynb_
+  * _preprocessing/events_file_population/create_MID_events_files.ipynb_
+    * note that an alternative script for MID to model both cue and feedback exists here: _preprocessing/events_file_population/create_MID_events_files_cue_and_feedback.ipynb_
+    
 
 ### Analysis:
 
@@ -56,14 +109,14 @@ Derivatives directory:
   * _analysis/behavioral_analysis/demographics_table.ipynb_
 
 
-2. cifti smoothing using hcp tools 
+2. Cifti smoothing using hcp tools 
 
 * Run the following using SLURM job scheduler:
   * _analysis/HCP_smoothing/run_HCP_smoothing_for_tasks.sh_
     * this will call for each task: _analysis/HCP_smoothing/HCP_smoothing_by_tasks.sh_
 
 
-3. first, second (for mid and sst tasks given they have two runs) and group level modeling for nifti (volumetric) data
+3. First, second (for mid and sst tasks given they have two runs) and group level modeling for nifti (volumetric) data
 
 * First level: Run the following using SLURM job scheduler:
   * Replace {task} with the task that you want to run the first level model for
@@ -84,7 +137,7 @@ Derivatives directory:
     * this will save the effect size and stat maps per group/session/task at _../../../derivatives/task_analysis_volume/group_level/group-{group}/ses-{ses}/task-{task}_ to be used by the fsleyes visualization
 
 
-4. first, second (for mid and sst tasks given they have two runs) and group level modeling for cifti (grayordinate) data
+4. First, second (for mid and sst tasks given they have two runs) and group level modeling for cifti (grayordinate) data
 
 * First level: Run the following using SLURM job scheduler:
   * Replace {task} with the task that you want to run the first level model for
