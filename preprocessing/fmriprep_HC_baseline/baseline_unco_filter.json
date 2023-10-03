@@ -1,0 +1,27 @@
+{
+    "bold":
+    {
+        "datatype": "func",
+        "session": "baseline",
+        "suffix": "bold",
+        "reconstruction": "unco"
+    },
+    "t1w":
+    {
+        "datatype": "anat",
+        "session": "baseline",
+        "suffix": "T1w"
+    },
+    "t2w":
+    {
+        "datatype": "anat",
+        "session": "baseline",
+        "suffix": "T2w"
+    },
+    "fmap":
+    {
+        "datatype": "fmap",
+        "session": "baseline",
+        "suffix": "epi"
+    }
+}
