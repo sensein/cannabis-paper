@@ -56,6 +56,7 @@ do
         4 4 \
         COLUMN \
         $output_cifti_path \
+        -fwhm \
         -left-surface ../../code/analysis/templates/tpl-fsLR_hemi-L_den-32k_sphere.surf.gii \
         -right-surface ../../code/analysis/templates/tpl-fsLR_hemi-R_den-32k_sphere.surf.gii
     done
