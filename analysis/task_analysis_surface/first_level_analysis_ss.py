@@ -248,7 +248,11 @@ def create_dscalar(orig_cifti, contrast_output):
     
     #save old header info
     orig_cifti_nimg = nimg.load_img(orig_cifti)
-    time_axis, brain_model_axis = [orig_cifti_nimg.header.get_axis(i) for i in range(orig_cifti_nimg.ndim)]
+    
+    if orig_cifti_nimg.ndim != 2:
+        raise ValueError("Can't generate dscalar CIFTI-2 from header. Incorrect number of axes")
+    else:
+        time_axis, brain_model_axis = [orig_cifti_nimg.header.get_axis(i) for i in range(orig_cifti_nimg.ndim)]
 
     for output_type,output_value in contrast_output_dict.items():
         #create new header
