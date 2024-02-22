@@ -12,7 +12,6 @@
 #SBATCH -x node[054-060,100-115]
 
 
-module load openmind/hcp-workbench/1.2.3
 
 task=$1 #read in task to be smoothed
 run=$2 #read in run of the task to be smoothed
@@ -53,10 +52,9 @@ do
         #command inputs in order: cifti file; surface kernel size in terms of sigma, volume kernel size in terms of sigma; direction to smooth along: COLUMN is used for dtseries files, while ROW would be used for dconn files; cifti output file; left surface file; right surface file
         wb_command -cifti-smoothing \
         $input_cifti_path \
-        4 4 \
+        1.6986 1.6986 \
         COLUMN \
         $output_cifti_path \
-        -fwhm \
         -left-surface ../../code/analysis/templates/tpl-fsLR_hemi-L_den-32k_sphere.surf.gii \
         -right-surface ../../code/analysis/templates/tpl-fsLR_hemi-R_den-32k_sphere.surf.gii
     done

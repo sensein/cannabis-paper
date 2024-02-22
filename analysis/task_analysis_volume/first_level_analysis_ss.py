@@ -1,15 +1,21 @@
 import os
 import sys
-import pandas as pd
-import numpy as np
 import glob
 import json
-import nibabel 
-import nilearn
 import re
+
+import pandas as pd
+import numpy as np
+
+import nibabel as nib
+import nilearn
+
 from nilearn.glm.first_level import FirstLevelModel
 from nilearn.plotting import plot_design_matrix
 from nilearn.plotting import plot_stat_map, plot_anat, plot_img
+from nilearn.maskers import NiftiMasker
+from nilearn import image as nimg
+
 import matplotlib.pyplot as plt
 
 
@@ -19,7 +25,7 @@ import matplotlib.pyplot as plt
 def get_confounds(sub,task,ses,run):
     print('in get_confounds getting started')
     #load file with confounds timeseries
-    all_confounds = pd.read_csv(f"../../../derivatives/ses-{ses}/sub-{sub}/ses-{ses}/func/sub-{sub}_ses-{ses}_task-{task}_rec-unco_run-{run}_desc-confounds_timeseries.tsv", sep = '\t')
+    all_confounds = pd.read_csv(f'../../../derivatives/ses-{ses}/sub-{sub}/ses-{ses}/func/sub-{sub}_ses-{ses}_task-{task}_rec-unco_run-{run}_desc-confounds_timeseries.tsv', sep = '\t')
     
     #rigid body motion
     motion_params = ['trans_x', 'trans_y', 'trans_z','rot_x','rot_y','rot_z']
@@ -35,20 +41,20 @@ def get_confounds(sub,task,ses,run):
     #these can be adjusted to be from the combined wm csf, for example
     #doesn't make sense to use csf and wm signal regression if using these according to fmriprep documentation
     #6 is rule of thumb; can pick diff number or specific amount of variance explained
-    #TO DO: add crown regressors once available 
     num_a_comp_cors=6
     a_comp_cors = []
     for i in range(num_a_comp_cors):
         a_comp_cors.append('a_comp_cor_{:02d}'.format(i))
-        
+    
+    #for now leave out crown regressors but can be added using the following code later on    
     #same for edge comp cors
     num_edge_comp_cors=6
     edge_comp_cors = []
 #     for i in range(num_edge_comp_cors):
 #         edge_comp_cors.append('edge_comp_{:02d}'.format(i))
     
-    #OR instead get all edge comp cors
-    #edge_comp_cors = [col for col in all_confounds.columns if 'edge_comp' in col]
+#     #OR instead get all edge comp cors
+#     edge_comp_cors = [col for col in all_confounds.columns if 'edge_comp' in col]
         
     #we need to filter out non-steady state volumes if using cosine regressors, ICA AROMA and CompCor regressors...    
     non_steady_state_regressors = [col for col in all_confounds.columns if 'non_steady_state' in col]
@@ -72,22 +78,17 @@ def get_confounds(sub,task,ses,run):
 #run first level glm model
 def run_first_level_model(sub,task,ses,run):
     print('in run_first_level_model getting started')
-    memory = './nilearn_cache' #change if desired
     space='MNI152NLin6Asym' #change if desired
-    
-    #get TR value
-    task_json = open(f"../../../task-{task}_bold.json")
-    task_json=json.load(task_json)
-    TR=task_json['RepetitionTime']
-    
+      
     #grab nifti, events and mask files
     nifti = glob.glob(f'../../../derivatives/ses-{ses}/sub-{sub}/ses-{ses}/func/sub-{sub}*task-{task}*rec-unco*run-{run}*{space}*preproc*nii.gz')[0]
     events = glob.glob(f'../../../sub-{sub}/ses-{ses}/func/sub-{sub}*task-{task}*rec-unco*run-{run}*events.tsv')[0]
     mask = glob.glob(f'../../../derivatives/ses-{ses}/sub-{sub}/ses-{ses}/func/sub-{sub}*task-{task}*rec-unco*run-{run}*{space}*brain_mask.nii.gz')[0]
     
+    events = pd.read_csv(events, sep = '\t')
+    
     #events file needs to be modified to reflect combined image+arrow stimuli for the sst task
     if task == 'sst':
-        events = pd.read_csv(events, sep = '\t')
         events=events.iloc[::2].reset_index(drop=True)
         events['duration']=events['duration'] + 1.5
         events['trial_type'] = events['trial_type'].replace({'N_Go_image': 'Go', 
@@ -96,23 +97,64 @@ def run_first_level_model(sub,task,ses,run):
                                                              'MJ_UnsuccStop_image': 'UnsuccStop',
                                                              'N_SuccStop_image': 'SuccStop', 
                                                              'MJ_SuccStop_image': 'SuccStop'})
-
+        
     #call function to get confounds
     selected_confounds=get_confounds(sub,task,ses,run)
+    
+    #get TR
+    task_json = open(f"../../../task-{task}_bold.json")
+    task_json=json.load(task_json)
+    TR=task_json['RepetitionTime']
+    
+    
+    #smoothe and mask nifti
+    #smoothing fwhm selected to be 4 since it is about twice the voxel resolution
+    nifti_masker = NiftiMasker(
+        mask_img = mask,
+        standardize=False,
+        standardize_confounds=False,
+        mask_strategy="epi",
+        smoothing_fwhm=4,
+        t_r = TR)
+    
+    nifti_masked_smoothed_2d = nifti_masker.fit_transform(nifti)
+    nifti_masked_smoothed = nifti_masker.inverse_transform(nifti_masked_smoothed_2d)
+    
+    
+    #get median grayordinate val
+    HCP_smoothed_cifti = glob.glob(f'../../../derivatives/HCP_smoothing/sub-{sub}/ses-{ses}/smoothed_sub-{sub}_ses-{ses}_task-{task}_rec-unco_run-{run}_space-fsLR_den-91k_bold.dtseries.nii')[0]
+    HCP_smoothed_cifti_nimg = nimg.load_img(HCP_smoothed_cifti)
+    HCP_smoothed_cifti_signal_unscaled = HCP_smoothed_cifti_nimg.get_fdata(dtype='f4')
+    median_cifti_across_time_space = np.median(HCP_smoothed_cifti_signal_unscaled)
+    
+    #scale nifti timeseries
+    masked_smoothed_nifti_nimg = nimg.load_img(nifti_masked_smoothed)
+    masked_smoothed_nifti_signal_unscaled = masked_smoothed_nifti_nimg.get_fdata(dtype='f4')
+    min_across_time_space = np.min(nifti_masked_smoothed_2d) #taking min of masker objects avoids getting 0 as min due to mask
+    masked_smoothed_scaled_nifti_signal = 1000*(masked_smoothed_nifti_signal_unscaled-min_across_time_space)/(median_cifti_across_time_space-min_across_time_space)
+
+    #get the affine matrix
+    nifti_image = nib.load(nifti)
+    affine_matrix = nifti_image.affine
+
+    #create nifti image from the masked, smoothed and scaled data array
+    masked_smoothed_scaled_nifti_nimg = nib.Nifti1Image(masked_smoothed_scaled_nifti_signal, affine=affine_matrix)
 
     #choose middle slice as reference since fmriprep default for slice timing correction
     #already accounting for drift and high pass filter with cosine regressors, so not needed
     #spm + derivative + disperson should account for undershoot and slight variances in HRF across ppl/regions
-    #smoothing fwhm selected to be 4 since it is about twice the voxel resolution
-    #TO DO: signal_scaling look more into it, doesn't affect stats but does affect effect size 
+    #smoothing was already done above, so set to None here
+    #mask has to be reapplied since otherwise the area around the brain would now be negative due to having subtracted the min from the 0-masked voxels
     glm = FirstLevelModel(t_r = TR, mask_img=mask, \
-        slice_time_ref=0.5, smoothing_fwhm=6.0, hrf_model='spm + derivative + dispersion', drift_model=None, \
+        slice_time_ref=0.5, smoothing_fwhm=None, hrf_model='spm + derivative + dispersion', drift_model=None, \
         high_pass=None, drift_order=4, standardize=False, signal_scaling=False, noise_model='ar1', \
-        memory=memory, minimize_memory=True, verbose=0, n_jobs=-2)
-    print('set up glm')
+        minimize_memory=True, verbose=0, n_jobs=-2)
+
     #fit glm
-    fitted_glm = glm.fit(nifti, events=events, confounds=selected_confounds)
+    fitted_glm = glm.fit(masked_smoothed_scaled_nifti_nimg, events=events, confounds=selected_confounds)
+   
     print('finishing up run_first_level_model')
+    
     return [fitted_glm, selected_confounds]
 
 
@@ -127,12 +169,12 @@ def make_localizer_contrasts(design_matrix,task,selected_confounds):
     canonical_contrasts = dict([(column, contrast_matrix[i])
                       for i, column in enumerate(design_matrix.columns)])
     
-    
     #initialize dictionary of contrasts desired for analysis of respective task
     final_contrasts={}
     
     #initialize list of complex contrasts, which are combinations of the canonical contrasts
     task_contrasts = []
+    
     
     #complex contrasts for nback task (must include a '-' or '+' and be made up of canonical contrasts)
     if task == 'nback':
@@ -140,38 +182,47 @@ def make_localizer_contrasts(design_matrix,task,selected_confounds):
     
     #complex contrasts for mid task (must include a '-' or '+' and be made up of canonical contrasts)
     if task == 'mid':
-        task_contrasts = ['HiRewCue-NeuCue', #high reward anticipation
-                          'LoRewCue-NeuCue', #low reward anticipation
-                          'HiLossCue-NeuCue', #high loss anticipation
-                          'LoLossCue-NeuCue', #low loss anticipation
+        task_contrasts = ['HiRewCue-NeuCue', #high reward anticipation -- paper A2, ABCD
+                          'HiRewCue-LoRewCue', #high vs. low reward anticipation -- paper A3, ABCD
+                          'HiRewCue+LoRewCue-NeuCue', #combined reward anticipation -- paper A1
+                          'LoRewCue-NeuCue', #combined reward anticipation -- ABCD
                           
-                          'HiWin-NeuHit', #high reward outcome cp. to neutral hit
-                          'LoWin-NeuHit', #low reward outcome cp. to neutral hit
+                          'HiLossCue-NeuCue', #high loss anticipation -- paper A5, ABCD
+                          'HiLossCue-LoLossCue', #high vs. low loss anticipation -- ABCD
+                          'HiLossCue+LoLossCue-NeuCue', #combined loss anticipation
+                          'LoLossCue-NeuCue', #combined loss anticipation -- ABCD
+
+                          'HiRewCue-HiLossCue', #high reward vs. high loss anticipation
+                          'HiRewCue+LoRewCue-HiLossCue-LoLossCue', #combined reward vs. loss anticipation
+
+                          
+                          'HiWin-NeuHit', #high reward outcome cp. to neutral hit -- paper O6
+                          'HiWin+LoWin-NeuHit', #combined reward outcome cp. to neutral hit
+                          
                           'HiWin-HiNoWin', #high reward outcome cp. to high reward miss
-                          'LoWin-LoNoWin', #low reward outcome cp. to low reward miss
+                          'HiWin+LoWin-HiNoWin-LoNoWin', #combined reward outcome cp. to combined reward miss -- ABCD
                           
                           'HiLoss-NeuMiss', #high loss cp. to neutral miss
-                          'LoLoss-NeuMiss', #low loss cp. to neutral miss
-                          'HiLoss-AvoidHiLoss', #high loss cp. to avoid high loss
-                          'LoLoss-AvoidLoLoss', #low loss cp. to avoid low loss
-                          
-                          'HiRewCue+LoRewCue-NeuCue', #combined reward anticipation
-                          'HiLossCue+LoLossCue-NeuCue', #combined loss anticipation
-                          
-                          'HiWin+LoWin-NeuHit', #combined reward outcome cp. to neutral hit
-                          'HiWin+LoWin-HiNoWin-LoNoWin', #combined reward outcome cp. to combined reward miss
-                          
                           'HiLoss+LoLoss-NeuMiss', #combined loss cp. to neutral miss
-                          'HiLoss+LoLoss-AvoidHiLoss-AvoidLoLoss' #combined loss cp. to combined avoid loss  
+                          
+                          'HiLoss-AvoidHiLoss', #high loss cp. to high avoid loss
+                          'HiLoss+LoLoss-AvoidHiLoss-AvoidLoLoss', #combined loss cp. to combined avoid loss -- ABCD
+                          
+                          'HiLoss-NeuHit', #high loss cp. to neutral hit -- paper O7
+                          'HiLoss+LoLoss-NeuHit', #combined loss cp. to neutral hit
+                          
+                          'HiWin-HiLoss', #high reward outcome cp. to high loss
+                          'HiWin+LoWin-HiLoss+LoLoss', #combined reward outcome cp. to combined loss
                          ]
-        
+    
     if task == 'sst':
         #image and arrow as combined regressors 
         #MJ and N as combined regressors
         task_contrasts = ['SuccStop-Go', #correct inhibition
                           'UnsuccStop-Go', #incorrect inhibition
-                          'SuccStop-UnsuccStop' #successful inhibitory control  
+                          'UnsuccStop-SuccStop' #successful inhibitory control  
                          ]
+    
     
     #for loop that creates complex contrasts based on the string names from the task_contrasts list created above
     for task_contrast in task_contrasts:
@@ -224,6 +275,10 @@ def make_localizer_contrasts(design_matrix,task,selected_confounds):
     for confound in selected_confounds.columns:
         final_contrasts['nuisance_regressors']=final_contrasts['nuisance_regressors']+canonical_contrasts[confound]
     
+    #add big win anticipation minues implicit baseline as contrast for mid
+    if task == 'mid':
+        final_contrasts['HiRewCue'] = canonical_contrasts['HiRewCue'] #high reward anticipation vs. baseline -- paper A4
+    
     #return dictionary of all complex contrasts
     print('finishing up make_localizer_contrasts')
     return final_contrasts
@@ -265,12 +320,30 @@ def save_first_level_outputs(input_list):
         else:   
             contrast_output = fitted_glm.compute_contrast(contrasts[contrast], output_type='all',stat_type='t')
         
+        #rename mid contrasts to simpler names
+        #set up dictionary with simpler names
+        replace_mid_contrasts_dict = {
+                                      'HiRewCue+LoRewCue-NeuCue':'RewCue-NeuCue', #reward anticipation
+                                      'HiLossCue+LoLossCue-NeuCue':'LossCue-NeuCue', #loss anticipation
+                                      'HiRewCue+LoRewCue-HiLossCue-LoLossCue': 'RewCue-LossCue', #combined reward vs. loss anticipation
+                                      'HiRewCue':'HiRewCue-Baseline', #high reward anticipation vs. baseline
+
+                                      'HiWin+LoWin-NeuHit':'Win-NeuHit', #reward outcome cp. to neutral hit
+                                      'HiWin+LoWin-HiNoWin-LoNoWin':'Win-NoWin', #reward outcome cp. to reward miss
+                                      'HiLoss+LoLoss-NeuMiss':'Loss-NeuMiss', #loss cp. to neutral miss
+                                      'HiLoss+LoLoss-AvoidHiLoss-AvoidLoLoss':'Loss-AvoidLoss', #loss cp. to high loss
+                                      'HiLoss+LoLoss-NeuHit':'Loss-NeuHit', #combined loss cp. to neutral hit
+                                      'HiWin+LoWin-HiLoss+LoLoss':'Win-Loss', #combined reward outcome cp. to combined loss
+                                      }
+        #replace name of contrast if current contrast found in dictionary as a key, otherwise keeps current name
+        contrast = replace_mid_contrasts_dict.get(contrast, contrast) 
+        
         #create paths to output dir if not exist
         derivatives_path = '../../../derivatives'
         nilearn_output_path = os.path.join(derivatives_path, 'task_analysis_volume','first_level',f'sub-{sub}',f'ses-{ses}',f'task-{task}')
         if not os.path.isdir(nilearn_output_path):
             os.makedirs (nilearn_output_path)
-            
+        
         #save contrast maps to files
         contrast_output['effect_size'].to_filename(f'../../../derivatives/task_analysis_volume/first_level/sub-{sub}/ses-{ses}/task-{task}/sub-{sub}_ses-{ses}_task-{task}_rec-unco_run-{run}_contrast-{contrast}_effect_size.nii.gz')
         contrast_output['effect_variance'].to_filename(f'../../../derivatives/task_analysis_volume/first_level/sub-{sub}/ses-{ses}/task-{task}/sub-{sub}_ses-{ses}_task-{task}_rec-unco_run-{run}_contrast-{contrast}_effect_variance.nii.gz')
@@ -297,7 +370,8 @@ def main(sub,task):
             #check that sub has task nifti and events.tsv file for this task, session and run
             nifti = (glob.glob(f'../../../derivatives/ses-{ses}/sub-{sub}/ses-{ses}/func/sub-{sub}*task-{task}*rec-unco*run-{run}*{space}*preproc*nii.gz'))
             events = (glob.glob(f'../../../sub-{sub}/ses-{ses}/func/sub-{sub}*task-{task}*rec-unco*run-{run}*events.tsv'))
-            if (len(nifti)>0) and (len(events)>0):
+            #checks that nifti and events files exist and that events file isn't empty (if empty but nifti exists then this nifti is from a run that was repeated and should not be analyzed)
+            if (len(nifti)>0) and (len(events)>0) and pd.read_csv(events[0],sep='\t').empty == False:
                 print('in main getting started')
                 input_list = sub,task,ses,run
                 save_first_level_outputs(input_list)
@@ -316,11 +390,6 @@ if __name__ == "__main__":
         print("You did not specify both a subject and a task (subject is first argument, task is second)")
         sys.exit(1)
     main(sub,task)
-
-
-
-
-
 
 
 

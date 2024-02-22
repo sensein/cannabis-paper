@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -l
 
 #SBATCH -p gablab
 #SBATCH --time=01:00:00
@@ -10,6 +10,7 @@
 #SBATCH -e log/%x-%A-%a.err
 #SBATCH --mail-user=dclb@mit.edu
 #SBATCH --mail-type=ALL
+#SBATCH -x node[041,054-060,100-115]
 
 # grab these from submission script
 task=$1

@@ -4,7 +4,7 @@
 #SBATCH -e log/%x-%A-%a.err
 #SBATCH --mail-user=dclb@mit.edu
 #SBATCH --mail-type=ALL
-#SBATCH -p normal
+#SBATCH -p gablab
 
 #SBATCH -J second_level_analysis_submission_script
 
